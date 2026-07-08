@@ -1,0 +1,15 @@
+# Environment variables and secrets
+.env
+
+# Student data - never push to public repo
+discussion_data.json
+enrollment_data.json
+staging.csv
+staging.json
+approved_grades.csv
+
+# Python
+venv/
+__pycache__/
+*.pyc
+.DS_Store
