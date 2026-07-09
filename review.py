@@ -1,17 +1,37 @@
-from flask import Flask, render_template_string, request, jsonify
+"""
+review.py
+---------
+Flask-based instructor review interface showing only students who need attention.
+Auto-approves full credit (5/5) and zero scores (no post submitted).
+Flagged and partial credit students require manual review.
+To review all students, use review_all.py instead.
+Receives SCORE_COLUMN, COMMENT_COLUMN, COURSE_ID, and DISCUSSION_ID
+as environment variables from main.py.
+"""
+
+from flask import Flask, render_template_string, request, jsonify, Response
+from vector_store import add_to_store
 import csv
 import json
 import os
+import io
+import warnings
+
+warnings.filterwarnings("ignore", category=FutureWarning)
 
 app = Flask(__name__)
 
 STAGING_FILE = "staging.csv"
-APPROVED_FILE = "approved.csv"
-
-SCORE_COLUMN = "Discussion 1 | AI and Careers in Finance & Accounting (3057678)"
-COMMENT_COLUMN = "Discussion 1 | AI and Careers in Finance & Accounting (3057678) - Comments"
+SCORE_COLUMN = os.getenv("SCORE_COLUMN", "Discussion 1 | AI and Careers in Finance & Accounting (3057678)")
+COMMENT_COLUMN = os.getenv("COMMENT_COLUMN", "Discussion 1 | AI and Careers in Finance & Accounting (3057678) - Comments")
+COURSE_ID = int(os.getenv("COURSE_ID", 531715))
+DISCUSSION_ID = int(os.getenv("DISCUSSION_ID", 2421451))
 
 def load_students():
+    """
+    Load staging CSV. Auto-approves full credit and zero scores.
+    Only partial credit and flagged students require manual review.
+    """
     students = []
     with open(STAGING_FILE, "r") as f:
         reader = csv.DictReader(f)
@@ -21,12 +41,12 @@ def load_students():
                 score = float(row.get(SCORE_COLUMN, 0))
             except:
                 score = 0
-            # Auto-approve full credit and no-post students
-            if score == 5 or score == 0:
+            if (score == 5 or score == 0) and row.get("Flag") != "YES":
                 row["approved"] = True
             else:
                 row["approved"] = False
             students.append(row)
+    students.sort(key=lambda x: (x["Flag"] != "YES", x["approved"], x["Student"]))
     return students
 
 students = load_students()
@@ -65,6 +85,8 @@ TEMPLATE = """
         .btn-export { background: #1976d2; color: white; border: none; border-radius: 6px; padding: 12px 32px; font-size: 15px; cursor: pointer; }
         .btn-export:hover { background: #1565c0; }
         .progress { font-size: 14px; color: #555; }
+        .btn-approve-all { background: #757575; color: white; border: none; border-radius: 6px; padding: 12px 24px; font-size: 15px; cursor: pointer; }
+        .btn-approve-all:hover { background: #616161; }
     </style>
 </head>
 <body>
@@ -78,17 +100,19 @@ TEMPLATE = """
     </div>
 
     {% for student in students %}
-    <div class="student-card {% if student.Flag == 'YES' %}flagged{% elif student.approved %}approved{% endif %}" id="card-{{ loop.index0 }}">
+    <div class="student-card {% if student.Flag == 'YES' %}flagged{% elif student.approved %}approved{% endif %}"
+        id="card-{{ loop.index0 }}">
         <div class="student-name">
             {{ student.Student }}
             {% if student.Flag == 'YES' %}
             <span class="flag-badge">⚑ {{ student['Flag Reason'] }}</span>
             {% endif %}
-            <span class="approved-badge" id="approved-badge-{{ loop.index0 }}" style="{% if student.approved %}display:inline{% else %}display:none{% endif %}">✓ Approved</span>
+            <span class="approved-badge" id="approved-badge-{{ loop.index0 }}"
+                style="display:none">✓ Approved</span>
         </div>
         <div class="student-meta">{{ student['SIS Login ID'] }} &nbsp;|&nbsp; {{ student.Section }}</div>
 
-        {% if student[score_column] != '0' %}
+        {% if student[score_column] != '0' and student[score_column] != '0.0' %}
         <div class="section-label">Post</div>
         <div class="post-text">{{ student_posts[loop.index0] }}</div>
 
@@ -105,7 +129,10 @@ TEMPLATE = """
                 <label>Score</label>
                 <select id="score-{{ loop.index0 }}">
                     {% for score in [0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5] %}
-                    <option value="{{ score }}" {% if score == student[score_column]|float %}selected{% endif %}>{{ score }}</option>
+                    <option value="{{ score }}"
+                        {% if score == student[score_column]|float %}selected{% endif %}>
+                        {{ score }}
+                    </option>
                     {% endfor %}
                 </select>
             </div>
@@ -115,16 +142,20 @@ TEMPLATE = """
             </div>
         </div>
         <button class="btn-approve" id="btn-{{ loop.index0 }}"
-            onclick="approve({{ loop.index0 }}, '{{ student.ID }}')"
-            {% if student.approved %}disabled{% endif %}>
-            {% if student.approved %}Approved{% else %}Approve{% endif %}
+            onclick="approve({{ loop.index0 }}, '{{ student.ID }}')">
+            Approve
         </button>
     </div>
     {% endfor %}
 
     <div class="export-bar">
-        <div class="progress"><span id="progress-count">0</span> of {{ students|length }} reviewed</div>
-        <button class="btn-export" onclick="exportCSV()">Export All Grades</button>
+        <div class="progress">
+            <span id="progress-count">0</span> of {{ students|length }} reviewed
+        </div>
+        <div style="display: flex; gap: 12px;">
+            <button class="btn-approve-all" onclick="approveAll()">Approve All Remaining</button>
+            <button class="btn-export" onclick="exportCSV()">Export All Grades</button>
+        </div>
     </div>
 
     <script>
@@ -133,7 +164,7 @@ TEMPLATE = """
         function approve(index, studentId) {
             const score = document.getElementById(`score-${index}`).value;
             const comment = document.getElementById(`comment-${index}`).value;
-            
+
             fetch('/approve', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
@@ -156,6 +187,11 @@ TEMPLATE = """
         function exportCSV() {
             window.location.href = '/export';
         }
+
+        function approveAll() {
+            const buttons = document.querySelectorAll('.btn-approve:not(:disabled)');
+            buttons.forEach(btn => btn.click());
+        }
     </script>
 </body>
 </html>
@@ -163,18 +199,19 @@ TEMPLATE = """
 
 @app.route("/")
 def index():
+    """Render the review interface showing only students who need attention."""
     with open("discussion_data.json", "r") as f:
         discussion_data = json.load(f)
-    
+
     post_map = {str(s["user_id"]): s.get("post", "") for s in discussion_data}
-    reply_map = {str(s["user_id"]): [r["reply"] for r in s.get("outgoing_replies", [])] for s in discussion_data}
-    
-    # Only show students who need review
+    reply_map = {str(s["user_id"]): [r["reply"] for r in s.get("outgoing_replies", [])]
+                 for s in discussion_data}
+
     review_students = [s for s in students if not s["approved"]]
-    
+
     student_posts = [post_map.get(str(s["ID"]), "") for s in review_students]
     student_replies = [reply_map.get(str(s["ID"]), []) for s in review_students]
-    
+
     return render_template_string(
         TEMPLATE,
         students=review_students,
@@ -188,6 +225,7 @@ def index():
 
 @app.route("/approve", methods=["POST"])
 def approve():
+    """Mark a student record as approved with the edited score and comment."""
     data = request.json
     index = data["index"]
     students[index][SCORE_COLUMN] = data["score"]
@@ -197,17 +235,49 @@ def approve():
 
 @app.route("/export")
 def export():
-    from flask import Response
-    rows = [s for s in students if s.get("approved")]
-    
-    import io
+    """
+    Export all grades to CSV and write approved grades back to the vector store.
+    Exports all students including auto-approved ones.
+    """
+    with open("discussion_data.json", "r") as f:
+        discussion_data = json.load(f)
+
+    post_map = {str(s["user_id"]): s for s in discussion_data}
+    approved_rows = [s for s in students if s.get("approved")]
+
+    added = 0
+    for row in approved_rows:
+        user_id = str(row.get("ID", ""))
+        student_data = post_map.get(user_id)
+        if not student_data:
+            continue
+        try:
+            score = float(row.get(SCORE_COLUMN, 0))
+            if score == 0:
+                continue
+            post = student_data.get("post", "")
+            reply_texts = [r["reply"] for r in student_data.get("outgoing_replies", [])]
+            add_to_store(
+                course_id=COURSE_ID,
+                discussion_id=DISCUSSION_ID,
+                user_id=user_id,
+                post=post,
+                replies=reply_texts,
+                score=score
+            )
+            added += 1
+        except Exception as e:
+            print(f"Could not add user {user_id} to vector store: {e}")
+
+    print(f"Added {added} approved grades to vector store")
+
     output = io.StringIO()
     fieldnames = ["Student", "ID", "SIS User ID", "SIS Login ID", "Section",
                   SCORE_COLUMN, COMMENT_COLUMN]
     writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction='ignore')
     writer.writeheader()
-    writer.writerows(rows)
-    
+    writer.writerows(approved_rows)
+
     return Response(
         output.getvalue(),
         mimetype="text/csv",
