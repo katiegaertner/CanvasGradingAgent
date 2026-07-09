@@ -12,4 +12,8 @@ approved_grades.csv
 venv/
 __pycache__/
 *.pyc
+.DS_Storechroma_store/
+__pycache__/
 .DS_Store
+config.json
+staging.json
