@@ -146,9 +146,6 @@ all other scores require instructor review.
 
 - Currently configured for a single discussion assignment; multi-discussion 
   support is planned
-- RAG, ToT, and Consistency Reviewer layers are designed but not yet implemented
-- Production deployment requires institutional Vertex AI agreement for FERPA 
-  compliance
 - Python 3.12+ required; tested on macOS with Apple Silicon
 
 ---
