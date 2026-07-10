@@ -23,7 +23,7 @@ No grade reaches Canvas without explicit instructor approval.
 
 ## Architecture
 
-![Architecture Diagram](architecture.png)
+CanvasDiscussionGradingAgent.png
 
 The system uses a ReAct-style reasoning loop, grounding each evaluation against 
 a structured rubric. Ambiguous cases are flagged for instructor review. 
